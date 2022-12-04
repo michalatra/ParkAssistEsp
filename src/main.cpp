@@ -33,7 +33,6 @@ int TRIG_PINS[DETECTOR_PINOUT_COUNT] = {12, 27, 25, 32};
 
 // Detectors data storage variables
 int measuredDistances[MAX_DETECTOR_COUNT];
-int measurementTime[MAX_DETECTOR_COUNT];
 bool detectorStatus[MAX_DETECTOR_COUNT] = {false};
 
 
@@ -41,11 +40,13 @@ bool detectorStatus[MAX_DETECTOR_COUNT] = {false};
 int cableDetectorsCount = 0;
 int wirelessDetectorsCount = 0;
 bool measurementEnabled = false;
+bool screenEnabled = false;
 
 
-void setupCableDetectors(std::string value);
+void setupWiredDetectors(std::string value);
 void startAdvertising();
 void stopAdvertising();
+void setupScreen();
 
 // Defining callback for bluetooth transmission events
 class CharacteristicCallbacks: public BLECharacteristicCallbacks {
@@ -59,12 +60,14 @@ class CharacteristicCallbacks: public BLECharacteristicCallbacks {
         measurementEnabled = false;
       } else if (value == "WIRELESS_COUNT") {
         pCharacteristic->setValue(std::to_string(wirelessDetectorsCount));
-      } else if (value == "ADD") {
+      } else if (value == "ADD_WIRELESS") {
         // TODO: Obłsuga dodawania bezprzewodowych czujników
-      } else if (value == "REMOVE") {
+      } else if (value == "REMOVE_WIRELESS") {
         // TODO: Obsługa usuwania bezprzewodowych czujników
-      } else if (value.find("SET_CABLE") != -1) {
-        setupCableDetectors(value);
+      } else if (value.find("SET_WIRED") != -1) {
+        setupWiredDetectors(value);
+      } else if (value == "SCREEN") {
+        setupScreen();
       }
     }
   }
@@ -114,7 +117,7 @@ void setupBluetooth() {
 }
 
 
-void setupCableDetectors(std::string value) {
+void setupWiredDetectors(std::string value) {
   Serial.print("Setting up detectors placement: ");
   Serial.print(value.c_str());
   Serial.print("\n");
@@ -151,6 +154,7 @@ void setupScreen() {
 
   lcd.init();
   lcd.backlight();
+  screenEnabled = true;
 
   Serial.println("Screen setup finished.");
 }
@@ -200,7 +204,7 @@ void sendResultsViaBluetooth() {
   pCharacteristic->setValue(getStringifiedReadings());
 }
 
-void measureCableDetectors() {
+void measureWiredDetectors() {
   for (int i=0; i < DETECTOR_PINOUT_COUNT; i++) {
     if (detectorStatus[i]) {
       digitalWrite(TRIG_PINS[i], LOW);
@@ -222,18 +226,22 @@ void setup() {
   setupSerial();
   setupBluetooth();
   setupDetectorsPinouts();
-  setupScreen();
   startAdvertising();
 }
 
 void loop() {
   if (measurementEnabled) {
-    measureCableDetectors();
+    measureWiredDetectors();
     sendResultsViaBluetooth();
-    printResultsOnScreen();
+    if (screenEnabled) {
+      printResultsOnScreen();
+    }
   } else {
-    lcd.clear();
-    lcd.println("Pomiar wstrzymany");
+    if (screenEnabled) {
+      lcd.clear();
+      lcd.println("Pomiar wstrzymany");
+    }
   }
+  
   delay(500);
 }

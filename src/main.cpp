@@ -28,7 +28,7 @@ LiquidCrystal_I2C lcd(0x27,20,4);
 const int DETECTOR__COUNT = 4;
 const int MAX_DETECTOR_COUNT = 8;
 
-int ECHO_PINS[DETECTOR__COUNT] = {13, 4, 26, 33};
+int ECHO_PINS[DETECTOR__COUNT] = {13, 14, 26, 33};
 int TRIG_PINS[DETECTOR__COUNT] = {12, 27, 25, 32};
 
 // Detectors data storage variables
@@ -197,14 +197,21 @@ std::string getStringifiedReadings() {
     }
   }
 
+  Serial.print("Readings: ");
+  Serial.print(readings.c_str());
+  Serial.print("\n");
+
   return readings;
 }
 
 void sendResultsViaBluetooth() {
+  Serial.println("Sending results");
   pCharacteristic->setValue(getStringifiedReadings());
 }
 
 void measureWiredDetectors() {
+  Serial.println("Reading data from wired detectors");
+
   for (int i=0; i < DETECTOR__COUNT; i++) {
     if (detectorStatus[i]) {
       digitalWrite(TRIG_PINS[i], LOW);
@@ -213,7 +220,7 @@ void measureWiredDetectors() {
       delayMicroseconds(10);
       digitalWrite(TRIG_PINS[i], LOW);
       digitalWrite(ECHO_PINS[i], HIGH);
-      measuredDistances[i] = pulseIn(ECHO_PINS[i], HIGH) / 58;
+      measuredDistances[i] = pulseIn(ECHO_PINS[i], HIGH, 100000) / 58;
     }
   }
 }
@@ -235,12 +242,14 @@ void loop() {
     if (screenEnabled) {
       printResultsOnScreen();
     }
+
+    delay(200);
   } else {
     if (screenEnabled) {
       lcd.clear();
       lcd.println("Pomiar wstrzymany");
     }
-  }
 
-  delay(500);
+    delay(1000);
+  }
 }

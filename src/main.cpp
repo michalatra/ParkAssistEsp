@@ -7,10 +7,22 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 
-
 // Defining bluetooth identifiers
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+#define RXD2 16
+#define TXD2 17
+
+// LI-DAR
+int dist;
+int strength;
+float temperature;
+unsigned char check;
+int i;
+unsigned char uart[9];
+const int HEADER=0x59;
+int rec_debug_state = 0x01;
 
 
 // Setting up variables to control bluetooth connections
@@ -47,6 +59,7 @@ void setupWiredDetectors(std::string value);
 void startAdvertising();
 void stopAdvertising();
 void setupScreen();
+void setupLidar();
 
 // Defining callback for bluetooth transmission events
 class CharacteristicCallbacks: public BLECharacteristicCallbacks {
@@ -160,6 +173,15 @@ void setupScreen() {
 }
 
 
+// Setting up Lidar sensor
+void setupLidar() {
+  Serial.println("Setting up LiDAR...");
+
+  Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
+
+  Serial.println("LiDAR setup finished.");
+}
+
 // Initializing bluetooth connection
 void startAdvertising() {
   pAdvertising->start();
@@ -229,14 +251,82 @@ void measureWirelessDetectors() {
   // TODO: Reading from connected wireless detectors
 }
 
+void measureLidar() {
+  if (Serial2.available()) {
+    if (rec_debug_state == 0x01) {
+      uart[0] = Serial2.read();
+      if (uart[0] == 0x59) {
+        check = uart[0];
+        rec_debug_state = 0x02;
+      }
+    } else if(rec_debug_state == 0x02) {
+      uart[1] = Serial2.read();
+      if (uart[1] == 0x59) {
+        check += uart[1];
+        rec_debug_state = 0x03;
+      } else {
+        rec_debug_state = 0x01;
+      }
+    } else if (rec_debug_state == 0x03) {
+      uart[2] = Serial2.read();
+      check += uart[2];
+      rec_debug_state = 0x04;
+    } else if (rec_debug_state == 0x04) {
+      uart[3] = Serial2.read();
+      check += uart[3];
+      rec_debug_state = 0x05;
+    } else if (rec_debug_state == 0x05) {
+      uart[4] = Serial2.read();
+      check += uart[4];
+      rec_debug_state = 0x06;
+    } else if (rec_debug_state == 0x06) {
+      uart[5] = Serial2.read();
+      check += uart[5];
+      rec_debug_state = 0x07;
+    } else if (rec_debug_state == 0x07) {
+      uart[6] = Serial2.read();
+      check += uart[6];
+      rec_debug_state = 0x08;
+    } else if (rec_debug_state == 0x08) {
+      uart[7] = Serial2.read();
+      check += uart[7];
+      rec_debug_state = 0x09;
+    } else if (rec_debug_state == 0x09) {
+      uart[8] = Serial2.read();
+      
+      if (uart[8] == check) {
+          dist = uart[2] + uart[3]*256;//the distance
+          strength = uart[4] + uart[5]*256;//the strength
+          temperature = uart[6] + uart[7] *256;//calculate chip temprature
+          temperature = temperature/8 - 256;                              
+          Serial.print("dist = ");
+          Serial.print(dist); //output measure distance value of LiDAR
+          Serial.print('\n');
+          Serial.print("strength = ");
+          Serial.print(strength); //output signal strength value
+          Serial.print('\n');
+          Serial.print("\t Chip Temprature = ");
+          Serial.print(temperature);
+          Serial.println(" celcius degree"); //output chip temperature of Lidar                                                       
+          while(Serial2.available()){Serial2.read();} // This part is added becuase some previous packets are there in the buffer so to clear serial buffer and get fresh data.
+          delay(100);
+      }
+
+      rec_debug_state = 0x01;
+    }
+  }
+}
+
 void setup() {
   setupSerial();
+  setupLidar();
   setupBluetooth();
   setupDetectorsSockets();
   startAdvertising();
 }
 void loop() {
   if (measurementEnabled) {
+    measureLidar();
     measureWiredDetectors();
     sendResultsViaBluetooth();
     if (screenEnabled) {

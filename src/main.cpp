@@ -24,6 +24,10 @@ unsigned char uart[9];
 const int HEADER=0x59;
 int rec_debug_state = 0x01;
 
+bool lidar_enabled = false;
+bool ultrasonic_enabled = false;
+bool infrared_enabled = false;
+
 
 // Setting up variables to control bluetooth connections
 BLEServer* pServer;
@@ -37,14 +41,16 @@ LiquidCrystal_I2C lcd(0x27,20,4);
 
 
 // Program-level constants definitions
-const int DETECTOR__COUNT = 4;
-const int MAX_DETECTOR_COUNT = 8;
+const int LIDAR_DETECTOR_COUNT = 2;
+const int ULTRASONIC_DETECTOR__COUNT = 4;
+const int INFRARED_DETECTOR__COUNT = 4;
+const int MAX_DETECTOR_COUNT = 10;
 
-int ECHO_PINS[DETECTOR__COUNT] = {13, 14, 26, 33};
-int TRIG_PINS[DETECTOR__COUNT] = {12, 27, 25, 32};
+int ECHO_PINS[ULTRASONIC_DETECTOR__COUNT] = {12, 27, 25, 32};
+int TRIG_PINS[ULTRASONIC_DETECTOR__COUNT] = {13, 14, 26, 33};
 
 // Detectors data storage variables
-int measuredDistances[MAX_DETECTOR_COUNT];
+int measuredDistances[MAX_DETECTOR_COUNT] = {0};
 bool detectorStatus[MAX_DETECTOR_COUNT] = {false};
 
 
@@ -55,7 +61,9 @@ bool measurementEnabled = false;
 bool screenEnabled = false;
 
 
-void setupWiredDetectors(std::string value);
+void setupUltrasonicDetectors(std::string value);
+void setupInfraredDetectors(std::string value);
+void setupLidarDetectors(std::string value);
 void startAdvertising();
 void stopAdvertising();
 void setupScreen();
@@ -77,8 +85,12 @@ class CharacteristicCallbacks: public BLECharacteristicCallbacks {
         // TODO: Obłsuga dodawania bezprzewodowych czujników
       } else if (value == "REMOVE_WIRELESS") {
         // TODO: Obsługa usuwania bezprzewodowych czujników
-      } else if (value.find("SET_WIRED") != -1) {
-        setupWiredDetectors(value);
+      } else if (value.find("SET_ULTRASONIC") != -1) {
+        setupUltrasonicDetectors(value);
+      } else if (value.find("SET_INFRARED") != -1) {
+        // setupUltrasonicDetectors(value);
+      } else if (value.find("SET_LIDAR") != -1) {
+        setupLidarDetectors(value);
       } else if (value == "SCREEN") {
         setupScreen();
       }
@@ -130,21 +142,57 @@ void setupBluetooth() {
 }
 
 
-void setupWiredDetectors(std::string value) {
-  Serial.print("Setting up detectors placement: ");
-  Serial.print(value.c_str());
+void setupUltrasonicDetectors(std::string value) {
+  Serial.print("Setting up ultrasonic detectors placement: ");
+  Serial.print(value.at(15));
   Serial.print("\n");
 
-  for (int i=0; i < DETECTOR__COUNT; i++) {
-    detectorStatus[i] = false;
+  for (int i=0; i < ULTRASONIC_DETECTOR__COUNT; i++) {
+    detectorStatus[i + LIDAR_DETECTOR_COUNT] = false;
   }
 
-  for (int i=10; i < value.length(); i += 2) {
+  if (value.at(15) == 'F') {
+    ultrasonic_enabled = false;
+    return;
+  }
+
+  ultrasonic_enabled = true;
+
+  for (int i=17; i < value.length(); i += 2) {
     Serial.println(value.at(i) - 48);
-    detectorStatus[value.at(i) - 48] = true;
+    detectorStatus[LIDAR_DETECTOR_COUNT + (value.at(i) - 48)] = true;
     cableDetectorsCount++;
   }
 
+}
+
+void setupInfraredDetectors(std::string value) {
+  
+  Serial.print("Setting up infrared detectors placement: ");
+  Serial.print(value.c_str());
+  Serial.print("\n");
+
+  // TODO: Obsługa czujników podczerwonych
+}
+
+void setupLidarDetectors(std::string value) {
+  
+  Serial.print("Setting up lidar detectors: ");
+  Serial.print(value.at(10));
+  Serial.print("\n");
+
+  for (int i=0; i < LIDAR_DETECTOR_COUNT; i++) {
+    detectorStatus[i] = false;
+  }
+
+  if (value.at(10) == 'F') {
+    lidar_enabled = false;
+    return;
+  }
+
+  detectorStatus[0] = true;
+  lidar_enabled = true;
+  
 }
 
 
@@ -152,7 +200,7 @@ void setupWiredDetectors(std::string value) {
 void setupDetectorsSockets() {
   Serial.println("Setting up detectors...");
 
-  for (int i=0; i < DETECTOR__COUNT; i++) {
+  for (int i=0; i < ULTRASONIC_DETECTOR__COUNT; i++) {
     pinMode(TRIG_PINS[i], OUTPUT);
     pinMode(ECHO_PINS[i], INPUT);
   }
@@ -231,90 +279,105 @@ void sendResultsViaBluetooth() {
   pCharacteristic->setValue(getStringifiedReadings());
 }
 
-void measureWiredDetectors() {
+void measureUltrasonicDetectors() {
   Serial.println("Reading data from wired detectors");
 
-  for (int i=0; i < DETECTOR__COUNT; i++) {
-    if (detectorStatus[i]) {
+  for (int i=0; i < ULTRASONIC_DETECTOR__COUNT; i++) {
+    if (detectorStatus[i + LIDAR_DETECTOR_COUNT]) {
       digitalWrite(TRIG_PINS[i], LOW);
       delayMicroseconds(2);
       digitalWrite(TRIG_PINS[i], HIGH);
       delayMicroseconds(10);
       digitalWrite(TRIG_PINS[i], LOW);
       digitalWrite(ECHO_PINS[i], HIGH);
-      measuredDistances[i] = pulseIn(ECHO_PINS[i], HIGH, 100000) / 58;
+      measuredDistances[i + LIDAR_DETECTOR_COUNT] = pulseIn(ECHO_PINS[i], HIGH, 100000) / 58;
+      Serial.println(measuredDistances[i + LIDAR_DETECTOR_COUNT]);
     }
   }
+}
+
+void measureInfraredDetectors() {
+  // TODO: Measuring infrared detectors
 }
 
 void measureWirelessDetectors() {
   // TODO: Reading from connected wireless detectors
 }
 
-void measureLidar() {
-  if (Serial2.available()) {
-    if (rec_debug_state == 0x01) {
-      uart[0] = Serial2.read();
-      if (uart[0] == 0x59) {
-        check = uart[0];
-        rec_debug_state = 0x02;
+void measureLidarDetectors() {
+  while (rec_debug_state != 0x09) {
+    if (Serial2.available()) {
+      if (rec_debug_state == 0x01) {
+        uart[0] = Serial2.read();
+        if (uart[0] == 0x59) {
+          check = uart[0];
+          rec_debug_state = 0x02;
+        }
+      } else if(rec_debug_state == 0x02) {
+        uart[1] = Serial2.read();
+        if (uart[1] == 0x59) {
+          check += uart[1];
+          rec_debug_state = 0x03;
+        } else {
+          rec_debug_state = 0x01;
+        }
+      } else if (rec_debug_state == 0x03) {
+        uart[2] = Serial2.read();
+        check += uart[2];
+        rec_debug_state = 0x04;
+      } else if (rec_debug_state == 0x04) {
+        uart[3] = Serial2.read();
+        check += uart[3];
+        rec_debug_state = 0x05;
+      } else if (rec_debug_state == 0x05) {
+        uart[4] = Serial2.read();
+        check += uart[4];
+        rec_debug_state = 0x06;
+      } else if (rec_debug_state == 0x06) {
+        uart[5] = Serial2.read();
+        check += uart[5];
+        rec_debug_state = 0x07;
+      } else if (rec_debug_state == 0x07) {
+        uart[6] = Serial2.read();
+        check += uart[6];
+        rec_debug_state = 0x08;
+      } else if (rec_debug_state == 0x08) {
+        uart[7] = Serial2.read();
+        check += uart[7];
+        rec_debug_state = 0x09;
       }
-    } else if(rec_debug_state == 0x02) {
-      uart[1] = Serial2.read();
-      if (uart[1] == 0x59) {
-        check += uart[1];
-        rec_debug_state = 0x03;
-      } else {
-        rec_debug_state = 0x01;
-      }
-    } else if (rec_debug_state == 0x03) {
-      uart[2] = Serial2.read();
-      check += uart[2];
-      rec_debug_state = 0x04;
-    } else if (rec_debug_state == 0x04) {
-      uart[3] = Serial2.read();
-      check += uart[3];
-      rec_debug_state = 0x05;
-    } else if (rec_debug_state == 0x05) {
-      uart[4] = Serial2.read();
-      check += uart[4];
-      rec_debug_state = 0x06;
-    } else if (rec_debug_state == 0x06) {
-      uart[5] = Serial2.read();
-      check += uart[5];
-      rec_debug_state = 0x07;
-    } else if (rec_debug_state == 0x07) {
-      uart[6] = Serial2.read();
-      check += uart[6];
-      rec_debug_state = 0x08;
-    } else if (rec_debug_state == 0x08) {
-      uart[7] = Serial2.read();
-      check += uart[7];
-      rec_debug_state = 0x09;
-    } else if (rec_debug_state == 0x09) {
-      uart[8] = Serial2.read();
-      
-      if (uart[8] == check) {
-          dist = uart[2] + uart[3]*256;//the distance
-          strength = uart[4] + uart[5]*256;//the strength
-          temperature = uart[6] + uart[7] *256;//calculate chip temprature
-          temperature = temperature/8 - 256;                              
-          Serial.print("dist = ");
-          Serial.print(dist); //output measure distance value of LiDAR
-          Serial.print('\n');
-          Serial.print("strength = ");
-          Serial.print(strength); //output signal strength value
-          Serial.print('\n');
-          Serial.print("\t Chip Temprature = ");
-          Serial.print(temperature);
-          Serial.println(" celcius degree"); //output chip temperature of Lidar                                                       
-          while(Serial2.available()){Serial2.read();} // This part is added becuase some previous packets are there in the buffer so to clear serial buffer and get fresh data.
-          delay(100);
-      }
-
-      rec_debug_state = 0x01;
     }
   }
+
+  uart[8] = Serial2.read();
+  
+  if (uart[8] == check) {
+      dist = uart[2] + uart[3]*256;
+      strength = uart[4] + uart[5]*256;
+      temperature = uart[6] + uart[7] *256;
+      temperature = temperature/8 - 256;                              
+      Serial.print("dist = ");
+      Serial.print(dist);
+      Serial.print('\n');
+      Serial.print("strength = ");
+      Serial.print(strength);
+      Serial.print('\n');
+      Serial.print("\t Chip Temprature = ");
+      Serial.print(temperature);
+      Serial.println(" celcius degree");
+
+      measuredDistances[0] = dist;     
+
+      while(Serial2.available()) {
+        Serial2.read();
+      }
+
+
+
+      delay(100);
+  }
+
+  rec_debug_state = 0x01;
 }
 
 void setup() {
@@ -326,8 +389,18 @@ void setup() {
 }
 void loop() {
   if (measurementEnabled) {
-    measureLidar();
-    measureWiredDetectors();
+    if (lidar_enabled) {
+      measureLidarDetectors();
+    }
+
+    if (ultrasonic_enabled) {
+      measureUltrasonicDetectors();
+    }
+
+    if (infrared_enabled) {
+      measureInfraredDetectors();
+    }
+
     sendResultsViaBluetooth();
     if (screenEnabled) {
       printResultsOnScreen();

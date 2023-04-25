@@ -61,6 +61,7 @@ enum CommandResult {
 	LIDAR_RANGING_ERROR = 11,
 	LIDAR_MEASUREMENT_ERROR = 12,
 	LUNA_MEASUREMENT_ERROR = 13,
+	NO_DETECTORS_CONFIGURED_ERROR = 14
 };
 
 class CharacteristicCallbacks : public BLECharacteristicCallbacks {
@@ -493,7 +494,6 @@ public:
 
 CommandResult Luna::setupUart() {
 	Serial.println("Setting up UART...");
-
 	Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
 	Serial.println("UART setup finished.");
 
@@ -502,7 +502,6 @@ CommandResult Luna::setupUart() {
 
 CommandResult Luna::disableUart() {
 	Serial.println("Disabling UART...");
-
 	Serial2.end();
 	Serial.println("UART disabled.");
 
@@ -810,7 +809,7 @@ class ParkAssist {
 	void setupBluetooth();
 	void startBluetoothAdvertising();
 	void stopBluetoothAdvertising();
-	void sendCommandResult(BluetoothCommand command, CommandResult result);
+	void prepareCommandResult(BluetoothCommand command, CommandResult result);
 	void startMeasurement();
 	void stopMeasurement();
 	void enableLidar();
@@ -825,7 +824,7 @@ public:
 	void setup();
 	void onBluetoothConnected();
 	void onBluetoothDisconnected();
-	void onBluetoothCommand(std::string command);
+	void onBluetoothCommand(BLECharacteristic *characteristic);
 	void run();
 };
 
@@ -935,14 +934,12 @@ void ParkAssist::sendResult() {
 	pCharacteristic->notify();
 }
 
-void ParkAssist::sendCommandResult(BluetoothCommand command, CommandResult result) {
+void ParkAssist::prepareCommandResult(BluetoothCommand command, CommandResult result) {
 	jsonDocument.clear();
 	jsonDocument[BLUETOOTH_MESSAGE_FIELD[COMMAND]] = command;
 	jsonDocument[BLUETOOTH_MESSAGE_FIELD[RESULT]] = result;
 	serializeJson(jsonDocument, jsonBuffer);
 	Serial.println(jsonBuffer);
-	pCharacteristic->setValue(jsonBuffer);
-	pCharacteristic->notify();
 }
 
 void ParkAssist::startMeasurement() {
@@ -957,12 +954,18 @@ void ParkAssist::startMeasurement() {
 				measurementEnabled = true;
 			}
 		} else {
-			lastCommandResult = CommandResult::SUCCESS;
-			measurementEnabled = true;
+			if (luna->getIsEnabled() || ultrasonic->getIsEnabled()) {
+				lastCommandResult = CommandResult::SUCCESS;
+				measurementEnabled = true;
+			} else {
+				lastCommandResult = CommandResult::NO_DETECTORS_CONFIGURED_ERROR;
+			}
 		}
+	} else {
+		lastCommandResult = CommandResult::ACTION_NOT_NECESSARY;
 	}
 
-	sendCommandResult(BluetoothCommand::START_MEASUREMENT, lastCommandResult);
+	prepareCommandResult(BluetoothCommand::START_MEASUREMENT, lastCommandResult);
 
 	if (measurementEnabled) {
 		Serial.println("Measurement started.");
@@ -986,9 +989,11 @@ void ParkAssist::stopMeasurement() {
 			lastCommandResult = CommandResult::SUCCESS;
 			measurementEnabled = false;
 		}
+	} else {
+		lastCommandResult = CommandResult::ACTION_NOT_NECESSARY;
 	}
 
-	sendCommandResult(BluetoothCommand::STOP_MEASUREMENT, lastCommandResult);
+	prepareCommandResult(BluetoothCommand::STOP_MEASUREMENT, lastCommandResult);
 
 	if (measurementEnabled) {
 		Serial.println("Measurement could not be stopped.");
@@ -1000,7 +1005,7 @@ void ParkAssist::stopMeasurement() {
 void ParkAssist::enableLidar() {
 	Serial.println("Enabling lidar...");
 
-	sendCommandResult(BluetoothCommand::ENABLE_LIDAR, lidar->setup());
+	prepareCommandResult(BluetoothCommand::ENABLE_LIDAR, lidar->setup());
 
 	Serial.println("Lidar enabled.");
 }
@@ -1008,7 +1013,7 @@ void ParkAssist::enableLidar() {
 void ParkAssist::disableLidar() {
 	Serial.println("Disabling lidar...");
 
-	sendCommandResult(BluetoothCommand::DISABLE_LIDAR, lidar->disable());
+	prepareCommandResult(BluetoothCommand::DISABLE_LIDAR, lidar->disable());
 
 	Serial.println("Lidar disabled.");
 }
@@ -1016,7 +1021,7 @@ void ParkAssist::disableLidar() {
 void ParkAssist::enableLuna() {
 	Serial.println("Enabling luna...");
 
-	sendCommandResult(BluetoothCommand::ENABLE_LUNA, luna->setup());
+	prepareCommandResult(BluetoothCommand::ENABLE_LUNA, luna->setup());
 
 	Serial.println("Luna enabled.");
 }
@@ -1024,7 +1029,7 @@ void ParkAssist::enableLuna() {
 void ParkAssist::disableLuna() {
 	Serial.println("Disabling luna...");
 
-	sendCommandResult(BluetoothCommand::DISABLE_LUNA, luna->disable());
+	prepareCommandResult(BluetoothCommand::DISABLE_LUNA, luna->disable());
 
 	Serial.println("Luna disabled.");
 }
@@ -1046,7 +1051,7 @@ void ParkAssist::enableUltrasonicDetectors() {
 	}
 
 	ultrasonic->setup();
-	sendCommandResult(BluetoothCommand::ENABLE_ULTRASONIC_DETECTORS, SUCCESS);
+	prepareCommandResult(BluetoothCommand::ENABLE_ULTRASONIC_DETECTORS, SUCCESS);
 
 	Serial.print("Ultrasonic detectors enabled. Count: ");
 	Serial.println(detecorCount);
@@ -1056,12 +1061,14 @@ void ParkAssist::disableUltrasonicDetectors() {
 	Serial.println("Disabling ultrasonic detectors...");
 
 	ultrasonic->disable();
-	sendCommandResult(BluetoothCommand::DISABLE_ULTRASONIC_DETECTORS, SUCCESS);
+	prepareCommandResult(BluetoothCommand::DISABLE_ULTRASONIC_DETECTORS, SUCCESS);
 
 	Serial.println("Ultrasonic detectors disabled.");
 }
 
-void ParkAssist::onBluetoothCommand(std::string command) {
+void ParkAssist::onBluetoothCommand(BLECharacteristic *characteristic) {
+	std::string command = characteristic->getValue();
+
 	jsonDocument.clear();
 	deserializeJson(jsonDocument, command);
 
@@ -1101,18 +1108,21 @@ void ParkAssist::onBluetoothCommand(std::string command) {
 			break;
 		}
 	}
+
+	characteristic->setValue(jsonBuffer);
+	characteristic->notify();
 }
 
 void ParkAssist::run() {
 	if (measurementEnabled) {
 		if (lidar->getIsEnabled()) {
-			lidarMeasured = lidar->measure();
+			lidarMeasured = lidar->measure() == SUCCESS;
 		} else {
 			lidarMeasured = false;
 		}
 
 		if (luna->getIsEnabled()) {
-			lunaMeasured = luna->measure();
+			lunaMeasured = luna->measure() == SUCCESS;
 		} else {
 			lunaMeasured = false;
 		}
@@ -1135,8 +1145,7 @@ void ParkAssist::run() {
 ParkAssist *parkAssist = new ParkAssist();
 
 void CharacteristicCallbacks::onWrite(BLECharacteristic *pCharacteristic) {
-	std::string value = pCharacteristic->getValue();
-	parkAssist->onBluetoothCommand(pCharacteristic->getValue());
+	parkAssist->onBluetoothCommand(pCharacteristic);
 }
 
 void ServerCallbacks::onConnect(BLEServer *pServer) {

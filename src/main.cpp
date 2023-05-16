@@ -24,6 +24,8 @@
 const int TRIG_PINS[ULTRASONIC_DETECTOR__COUNT] = {12, 27, 25, 32};
 const int ECHO_PINS[ULTRASONIC_DETECTOR__COUNT] = {13, 14, 26, 33};
 
+const int LIDAR_RESOLUTION = VL53L5CX_RESOLUTION_8X8;
+
 enum BluetoothMessageField {
 	COMMAND = 0,
 	RESULT = 1,
@@ -79,6 +81,7 @@ class Lidar {
 
 	int imageResolution = 0;
 	int imageWidth = 0;
+	int rangingFrequency = 0;
 	bool i2cEnabled = false;
 	bool rangingEnabled = false;
 	bool lidarConnected = false;
@@ -90,6 +93,7 @@ class Lidar {
 	CommandResult begin();
 	CommandResult setupResolution();
 	CommandResult setupRangingMode();
+	CommandResult setupFrequency();
 	CommandResult setPowerModeSleep();
 	CommandResult setPowerModeWakeup();
 	CommandResult setupIntegrationTime();
@@ -172,12 +176,12 @@ CommandResult Lidar::setupResolution() {
 
 	imageResolution = sensor.getResolution();
 
-	if (imageResolution == VL53L5CX_RESOLUTION_8X8) {
+	if (imageResolution == LIDAR_RESOLUTION) {
 		Serial.println("VL53L5CX resolution is 8x8, no need to change");
 		return ACTION_NOT_NECESSARY;
 	}
 
-	if (sensor.setResolution(VL53L5CX_RESOLUTION_8X8)) {
+	if (sensor.setResolution(LIDAR_RESOLUTION)) {
 		Serial.println("VL53L5CX resolution set to 8x8");
 		imageResolution = sensor.getResolution();
 		imageWidth = sqrt(imageResolution);
@@ -188,6 +192,33 @@ CommandResult Lidar::setupResolution() {
 	}
 
 	Serial.println("Resolution setup finished.");
+	return SUCCESS;
+}
+
+CommandResult Lidar::setupFrequency() {
+	Serial.println("Setting up frequency...");
+
+	if (!lidarConnected) {
+		Serial.println("VL53L5CX not connected, please check wiring");
+		return LIDAR_ERROR;
+	}
+
+	rangingFrequency = sensor.getRangingFrequency();
+
+	if (rangingFrequency == 10) {
+		Serial.println("VL53L5CX frequency is 10, no need to change");
+		return ACTION_NOT_NECESSARY;
+	}
+
+	if (sensor.setRangingFrequency(10)) {
+		Serial.println("VL53L5CX frequency set to 10");
+	}
+	else {
+		Serial.println("VL53L5CX failed to set frequency");
+		return LIDAR_RESOLUTION_ERROR;
+	}
+
+	Serial.println("Frequency setup finished.");
 	return SUCCESS;
 }
 
@@ -334,7 +365,15 @@ CommandResult Lidar::setup() {
 	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
 		return lastCommandResult;
 
+	lastCommandResult = setPowerModeWakeup();
+	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
+		return lastCommandResult;
+
 	lastCommandResult = setupResolution();
+	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
+		return lastCommandResult;
+
+	lastCommandResult = setupFrequency();
 	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
 		return lastCommandResult;
 
@@ -365,9 +404,9 @@ CommandResult Lidar::disable() {
 	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
 		return lastCommandResult;
 
-	lastCommandResult = disableI2C();
-	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
-		return lastCommandResult;
+	// lastCommandResult = disableI2C();
+	// if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
+	// 	return lastCommandResult;
 
 	isEnabled = false;
 	return SUCCESS;
@@ -429,8 +468,11 @@ CommandResult Lidar::stopMeasurement() {
 
 CommandResult Lidar::measure() {
 	int idx = 0;
-	if (!sensor.isDataReady())
-		return LIDAR_MEASUREMENT_ERROR;
+	for (int i=0; i<10; i++) {
+		if (sensor.isDataReady()) break;
+		delay(20);
+	}
+
 	if (!sensor.getRangingData(&measurement))
 		return LIDAR_MEASUREMENT_ERROR;
 
@@ -664,7 +706,7 @@ void UltrasonicDetector::measure() {
 	digitalWrite(trigPin, HIGH);
 	delayMicroseconds(10);
 	digitalWrite(trigPin, LOW);
-	distance = pulseIn(echoPin, HIGH) / 58.2;
+	distance = pulseIn(echoPin, HIGH, 100000) / 58.2;
 }
 
 void UltrasonicDetector::printResult() {
@@ -779,7 +821,8 @@ enum BluetoothCommand {
 	ENABLE_LUNA = 4,
 	DISABLE_LUNA = 5,
 	ENABLE_ULTRASONIC_DETECTORS = 6,
-	DISABLE_ULTRASONIC_DETECTORS = 7
+	DISABLE_ULTRASONIC_DETECTORS = 7,
+	MEASUREMENT = 8,
 };
 
 class ParkAssist {
@@ -905,6 +948,9 @@ void ParkAssist::stopBluetoothAdvertising() {
 
 void ParkAssist::prepareResult() {
 	jsonDocument.clear();
+
+	jsonDocument[BLUETOOTH_MESSAGE_FIELD[COMMAND]] = BluetoothCommand::MEASUREMENT;
+	jsonDocument[BLUETOOTH_MESSAGE_FIELD[RESULT]] = CommandResult::SUCCESS;
 
 	if (lidarMeasured) {
 		JsonArray lidarMeasurementArray = jsonDocument.createNestedArray(BLUETOOTH_MESSAGE_FIELD[MULTI_POINT_LIDAR]);
@@ -1071,6 +1117,9 @@ void ParkAssist::onBluetoothCommand(BLECharacteristic *characteristic) {
 
 	jsonDocument.clear();
 	deserializeJson(jsonDocument, command);
+	Serial.print("Received command: ");
+	Serial.println(jsonDocument.as<String>());
+
 
 	BluetoothCommand bluetoothCommand = jsonDocument[BLUETOOTH_MESSAGE_FIELD[COMMAND]];
 

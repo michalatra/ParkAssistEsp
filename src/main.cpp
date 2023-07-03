@@ -398,16 +398,17 @@ CommandResult Lidar::setup() {
 }
 
 CommandResult Lidar::disable() {
+	if (!isEnabled) {
+		Serial.println("Lidar already disabled, no need to disable again");
+		return ACTION_NOT_NECESSARY;
+	}
+
 	CommandResult lastCommandResult;
 
 	lastCommandResult = stopMeasurement();
 	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
 		return lastCommandResult;
-
-	// lastCommandResult = disableI2C();
-	// if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
-	// 	return lastCommandResult;
-
+		
 	isEnabled = false;
 	return SUCCESS;
 }
@@ -564,6 +565,11 @@ CommandResult Luna::setup() {
 
 CommandResult Luna::disable() {
 	Serial.println("Disabling Luna LiDAR...");
+
+	if (!isEnabled) {
+		Serial.println("Luna already disabled, no need to disable again.");
+		return ACTION_NOT_NECESSARY;
+	}
 
 	CommandResult lastCommandResult = disableUart();
 	if (lastCommandResult != SUCCESS && lastCommandResult != ACTION_NOT_NECESSARY)
